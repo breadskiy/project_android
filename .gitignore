@@ -8,3 +8,10 @@ backend/.pytest_cache/
 backend/app/__pycache__/
 .DS_Store
 
+
+.localappdata/
+.appdata/
+scratch/
+.dart_tool/
+build/
+
