@@ -1,0 +1,71 @@
+Class: ApiException (Line 8)
+   Line 15: toString ()
+
+Class: ApiUser (Line 18)
+
+Class: ApiShoppingList (Line 52)
+
+Class: ApiShoppingItem (Line 95)
+
+Class: ApiItemSuggestion (Line 132)
+
+Class: ApiAddResult (Line 152)
+
+Class: ApiCatalogProduct (Line 162)
+
+Class: ApiInviteInfo (Line 194)
+
+Class: ApiReplenishItem (Line 220)
+
+Class: ApiUserSettings (Line 246)
+
+Class: ApiCategory (Line 266)
+
+Class: ApiParsedItem (Line 286)
+
+Class: ApiUserSession (Line 302)
+
+Class: ApiUserProfile (Line 334)
+
+Class: ApiService (Line 377)
+   Line 421: normalizeEmail (String input)
+   Line 440: init ()
+   Line 477: logout ()
+   Line 559: refreshToken ()
+   Line 573: _doRefreshToken ()
+   Line 644: getLists ({String? query, bool? owned})
+   Line 658: _parseError (response)
+   Line 661: createList (String name, {String? description, List<String>? items})
+   Line 670: _parseError (response)
+   Line 685: _parseError (response)
+   Line 688: updateList (String listId, {String? name, String? description})
+   Line 697: _parseError (response)
+   Line 700: deleteList (String listId)
+   Line 703: _parseError (response)
+   Line 735: _parseError (response)
+   Line 764: _parseError (response)
+   Line 767: deleteItem (String listId, String itemId)
+   Line 770: _parseError (response)
+   Line 773: searchCatalog (String query)
+   Line 827: _parseError (response)
+   Line 830: joinList (String code)
+   Line 856: _parseError (response)
+   Line 859: getReplenish ()
+   Line 869: _parseError (response)
+   Line 872: getUserSettings ()
+   Line 878: _parseError (response)
+   Line 898: _parseError (response)
+   Line 901: getCategories ()
+   Line 916: parseItem (String text)
+   Line 930: ApiParsedItem (name: trimmed, quantity: 1.0)
+   Line 933: getListSuggestions (String listId, {int limit = 6})
+   Line 952: clearItems (String listId, {bool checkedOnly = false})
+   Line 962: _parseError (response)
+   Line 965: getFavoritesList ()
+   Line 971: _parseError (response)
+   Line 974: getMe ()
+   Line 980: _parseError (response)
+   Line 996: _parseError (response)
+   Line 999: getSessions ()
+   Line 1014: _parseError (http.Response response)
+

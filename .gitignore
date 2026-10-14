@@ -1,0 +1,10 @@
+build/
+.dart_tool/
+.idea/
+*.iml
+backend/venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/app/__pycache__/
+.DS_Store
+
