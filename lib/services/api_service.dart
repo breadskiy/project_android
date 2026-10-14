@@ -770,12 +770,12 @@ class ApiService {
     throw _parseError(response);
   }
 
-  Future<List<ApiCatalogProduct>> searchCatalog(String query) async {
+  Future<List<ApiCatalogProduct>> searchCatalog(String query, {int limit = 10}) async {
     if (query.trim().isEmpty) return [];
     final response = await _authorizedRequest(
       'GET',
       '/products/search',
-      queryParams: {'q': query.trim(), 'limit': '15'},
+      queryParams: {'q': query.trim(), 'limit': limit.toString()},
     );
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final data = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;

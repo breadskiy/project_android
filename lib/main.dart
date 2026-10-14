@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -23,6 +25,13 @@ const _authBlueDark = Color(0xFF136FD1);
 
 String _normalizeQuery(String value) {
   return value.trim().toLowerCase().replaceAll('ё', 'е');
+}
+
+/// Названия товаров показываем с большой буквы.
+String capName(String value) {
+  final t = value.trim();
+  if (t.isEmpty) return t;
+  return t[0].toUpperCase() + t.substring(1);
 }
 
 class _AppBackdrop extends StatelessWidget {
@@ -1587,7 +1596,7 @@ class _HomeTabState extends State<_HomeTab> {
         final item = _recommendations[index];
         return _HomeRecommendationCard(
           item: item,
-          onAdd: () => _addRecommendationWithPicker(item.name),
+          onAdd: () => _addRecommendationWithPicker(capName(item.name)),
         );
       },
     );
@@ -1906,7 +1915,7 @@ class _HomeRecommendationCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            item.name,
+            capName(item.name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: GoogleFonts.inter(
@@ -1951,9 +1960,13 @@ class _SearchTabState extends State<_SearchTab> {
   final List<ApiCategory> _categories = [];
   final List<ApiCatalogProduct> _catalogProducts = [];
   final List<String> _searchHistory = [];
+  final List<ApiCatalogProduct> _searchResults = [];
   String? _selectedCategoryId;
   bool _loadingCatalog = false;
-  bool _showAllProducts = false;
+  bool _searching = false;
+  int _visibleCount = 10;
+  Timer? _debounce;
+  String _activeQuery = '';
   String? _targetListId;
   String? _targetListName;
 
@@ -1979,12 +1992,12 @@ class _SearchTabState extends State<_SearchTab> {
   Future<void> _loadCategoriesAndProducts() async {
     setState(() {
       _loadingCatalog = true;
-      _showAllProducts = false;
+      _visibleCount = 10;
     });
     try {
       final results = await Future.wait([
         ApiService.instance.getCategories(),
-        ApiService.instance.getProducts(limit: 30),
+        ApiService.instance.getProducts(limit: 200),
       ]);
       if (!mounted) return;
       setState(() {
@@ -2021,16 +2034,59 @@ class _SearchTabState extends State<_SearchTab> {
     });
   }
 
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    final q = value.trim();
+    if (q.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _activeQuery = '';
+        _searchResults.clear();
+        _searching = false;
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 400), () => _runSearch(q));
+  }
+
+  Future<void> _runSearch(String query) async {
+    final q = query.trim();
+    if (q.isEmpty || !mounted) return;
+    setState(() {
+      _activeQuery = q;
+      _searching = true;
+    });
+    try {
+      final products = await ApiService.instance.searchCatalog(q);
+      if (!mounted) return;
+      // Ответ мог прийти уже для другого запроса — показываем только свежий.
+      if (_controller.text.trim() != q && _activeQuery != q) return;
+      setState(() {
+        _searchResults
+          ..clear()
+          ..addAll(products);
+        _searching = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _searchResults.clear();
+          _searching = false;
+        });
+      }
+    }
+  }
+
   Future<void> _selectCategory(String? categoryId) async {
     setState(() {
       _selectedCategoryId = categoryId;
       _loadingCatalog = true;
-      _showAllProducts = false;
+      _visibleCount = 10;
     });
     try {
       final products = await ApiService.instance.getProducts(
         categoryId: categoryId,
-        limit: 30,
+        limit: 200,
       );
       if (!mounted) return;
       setState(() {
@@ -2283,6 +2339,7 @@ class _SearchTabState extends State<_SearchTab> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -2350,117 +2407,177 @@ class _SearchTabState extends State<_SearchTab> {
                   ),
                   const SizedBox(height: 10),
                 ],
-                Autocomplete<ApiCatalogProduct>(
-                  optionsBuilder: (TextEditingValue value) async {
-                    final query = value.text.trim();
-                    if (query.isEmpty) return const Iterable<ApiCatalogProduct>.empty();
-                    try {
-                      final products = await ApiService.instance.searchCatalog(query);
-                      return products;
-                    } catch (_) {
-                      return const Iterable<ApiCatalogProduct>.empty();
+                TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  textInputAction: TextInputAction.search,
+                  keyboardType: TextInputType.text,
+                  textCapitalization: TextCapitalization.sentences,
+                  onChanged: _onQueryChanged,
+                  onSubmitted: (v) {
+                    if (v.trim().isNotEmpty) {
+                      _debounce?.cancel();
+                      _runSearch(v.trim());
                     }
                   },
-                  displayStringForOption: (option) => option.name,
-                  onSelected: (product) {
-                    _controller.text = product.name;
-                    _addWithPicker(product.name);
-                  },
-                  fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                    controller.value = _controller.value;
-                    return TextField(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      textInputAction: TextInputAction.search,
-                      keyboardType: TextInputType.text,
-                      textCapitalization: TextCapitalization.sentences,
-                      onSubmitted: (v) {
-                        if (v.trim().isNotEmpty) {
-                          _addWithPicker(v.trim());
-                        }
+                  decoration: InputDecoration(
+                    hintText: 'Поиск по каталогу (молоко, сыр...)',
+                    prefixIcon: const Icon(Icons.search, color: _authBlue),
+                    suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _controller,
+                      builder: (context, value, _) {
+                        if (value.text.isEmpty) return const SizedBox.shrink();
+                        return IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.black38),
+                          onPressed: () {
+                            _controller.clear();
+                            _onQueryChanged('');
+                          },
+                        );
                       },
-                      decoration: InputDecoration(
-                        hintText: 'Поиск по каталогу (молоко, сыр...)',
-                        prefixIcon: const Icon(Icons.search, color: _authBlue),
-                        filled: true,
-                        fillColor: Colors.white,
-                        hintStyle: const TextStyle(color: Colors.black38),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(color: _authBlue, width: 1.5),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(color: _authBlue, width: 1.5),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(color: _authBlue, width: 2),
-                        ),
-                      ),
-                    );
-                  },
-                  optionsViewBuilder: (context, onSelected, options) {
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 6,
-                        borderRadius: BorderRadius.circular(16),
-                        color: Colors.white,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 280),
-                          child: ListView.separated(
-                            padding: const EdgeInsets.all(8),
-                            shrinkWrap: true,
-                            itemCount: options.length,
-                            separatorBuilder: (_, _) => const SizedBox(height: 6),
-                            itemBuilder: (context, index) {
-                              final option = options.elementAt(index);
-                              return InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: () => onSelected(option),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.add, size: 16, color: _authBlue),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              option.name,
-                                              style: const TextStyle(
-                                                color: _ink,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            if (option.categoryName != null || option.defaultUnit != null)
-                                              Text(
-                                                '${option.categoryName ?? ''}${option.defaultUnit != null ? ' (${option.defaultUnit})' : ''}',
-                                                style: const TextStyle(
-                                                  color: _muted,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    hintStyle: const TextStyle(color: Colors.black38),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: _authBlue, width: 1.5),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: _authBlue, width: 1.5),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: _authBlue, width: 2),
+                    ),
+                  ),
+                ),
+                if (_activeQuery.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Icon(Icons.manage_search, color: _authBlue, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Найдено: ${_searching ? '…' : _searchResults.length}',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_searching)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(color: _authBlue),
+                      ),
+                    )
+                  else if (_searchResults.isEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: _authCard,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _authBlue.withValues(alpha: 0.35)),
+                      ),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'Ничего не найдено',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () => _addWithPicker(_activeQuery),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text('Добавить «$_activeQuery» как свой товар'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _authBlue,
+                                side: BorderSide(color: _authBlue.withValues(alpha: 0.6)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _authBlue.withValues(alpha: 0.4), width: 1.2),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(8),
+                        itemCount: _searchResults.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1, color: _border),
+                        itemBuilder: (context, index) {
+                          final item = _searchResults[index];
+                          final sub = item.defaultUnit != null && item.defaultUnit!.isNotEmpty
+                              ? item.defaultUnit!
+                              : (item.categoryName ?? '');
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () => _addWithPicker(capName(item.name)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          capName(item.name),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: _ink,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        if (sub.isNotEmpty)
+                                          Text(
+                                            sub,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(color: _muted, fontSize: 12),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: _authBlue,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.add, color: Colors.white, size: 16),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
                 if (_searchHistory.isNotEmpty) ...[
                   const SizedBox(height: 18),
                   Row(
@@ -2505,7 +2622,8 @@ class _SearchTabState extends State<_SearchTab> {
                         onTap: () {
                           _controller.text = query;
                           _focusNode.requestFocus();
-                          _addWithPicker(query);
+                          _debounce?.cancel();
+                          _runSearch(query);
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -2520,7 +2638,7 @@ class _SearchTabState extends State<_SearchTab> {
                               const Icon(Icons.search, size: 13, color: _authBlue),
                               const SizedBox(width: 5),
                               Text(
-                                query,
+                                capName(query),
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,
@@ -2635,9 +2753,9 @@ class _SearchTabState extends State<_SearchTab> {
                       GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _showAllProducts
-                        ? _catalogProducts.length
-                        : (_catalogProducts.length > 10 ? 10 : _catalogProducts.length),
+                    itemCount: _catalogProducts.length > _visibleCount
+                        ? _visibleCount
+                        : _catalogProducts.length,
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
                       mainAxisSpacing: 8,
@@ -2646,6 +2764,7 @@ class _SearchTabState extends State<_SearchTab> {
                     ),
                     itemBuilder: (context, i) {
                       final item = _catalogProducts[i];
+                      final title = capName(item.name);
                       return Container(
                         decoration: BoxDecoration(
                           color: Colors.white,
@@ -2661,7 +2780,7 @@ class _SearchTabState extends State<_SearchTab> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Text(
-                                    item.name,
+                                    title,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
@@ -2683,7 +2802,7 @@ class _SearchTabState extends State<_SearchTab> {
                               ),
                             ),
                             InkResponse(
-                              onTap: () => _addWithPicker(item.name),
+                              onTap: () => _addWithPicker(title),
                               radius: 16,
                               child: Container(
                                 padding: const EdgeInsets.all(4),
@@ -2699,15 +2818,15 @@ class _SearchTabState extends State<_SearchTab> {
                       );
                     },
                   ),
-                  if (!_showAllProducts && _catalogProducts.length > 10)
+                  if (_catalogProducts.length > _visibleCount)
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
                       child: SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: () => setState(() => _showAllProducts = true),
+                          onPressed: () => setState(() => _visibleCount += 10),
                           icon: const Icon(Icons.expand_more, size: 18),
-                          label: Text('Показать все (${_catalogProducts.length})'),
+                          label: Text('Показать еще (осталось ${_catalogProducts.length - _visibleCount})'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: _authBlue,
                             side: BorderSide(color: _authBlue.withValues(alpha: 0.6)),
@@ -3446,11 +3565,11 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                   padding: const EdgeInsets.only(right: 8),
                   child: ActionChip(
                     avatar: const Icon(Icons.add, size: 15, color: _authBlue),
-                    label: Text(s.name, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                    label: Text(capName(s.name), style: const TextStyle(color: Colors.white, fontSize: 13)),
                     backgroundColor: Colors.black.withValues(alpha: 0.25),
                     side: BorderSide(color: _authBlue.withValues(alpha: 0.45)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    onPressed: () => _addSuggestedItem(s.name),
+                    onPressed: () => _addSuggestedItem(capName(s.name)),
                   ),
                 );
               }).toList(),
@@ -3784,7 +3903,7 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                       final messenger = ScaffoldMessenger.of(context);
                       Navigator.pop(context);
                       try {
-                        final res = await ApiService.instance.addItem(widget.listId, product.name);
+                        final res = await ApiService.instance.addItem(widget.listId, capName(product.name));
                         if (!mounted) return;
                         setState(() {
                           _list = _list?.copyWith(
@@ -3849,7 +3968,7 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                               Text(
-                                                option.name,
+                                                capName(option.name),
                                                 style: const TextStyle(
                                                   color: _ink,
                                                   fontWeight: FontWeight.w600,
@@ -4046,7 +4165,7 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        item.name,
+                                        capName(item.name),
                                         style: TextStyle(
                                           decoration: item.isDone
                                               ? TextDecoration.lineThrough
