@@ -761,7 +761,6 @@ class _HomeShellState extends State<HomeShell> {
   final _homeKey = GlobalKey<_HomeTabState>();
   final _searchKey = GlobalKey<_SearchTabState>();
 
-  String get _listsStorageKey => 'shopping_lists_${widget.login}_${widget.password}';
 
   @override
   Widget build(BuildContext context) {
@@ -769,7 +768,6 @@ class _HomeShellState extends State<HomeShell> {
       _HomeTab(
         key: _homeKey,
         login: widget.login,
-        listsStorageKey: _listsStorageKey,
         onNavigate: _setTab,
         onSearchForList: openSearchForList,
         onQuickAdd: (name) async {
@@ -779,7 +777,6 @@ class _HomeShellState extends State<HomeShell> {
       ),
       _SearchTab(
         key: _searchKey,
-        listsStorageKey: _listsStorageKey,
       ),
       ListsPage(
         key: _listsKey,
@@ -789,7 +786,6 @@ class _HomeShellState extends State<HomeShell> {
       ),
       _ProfileTab(
         login: widget.login,
-        listsStorageKey: _listsStorageKey,
         onOpenListsTab: () => _setTab(2),
       ),
     ];
@@ -934,56 +930,6 @@ class _ShoppingList {
     );
   }
 
-  // ignore: unused_element
-  factory _ShoppingList.fromJson(Map<String, dynamic> json) {
-    final rawItems = (json['items'] as List<dynamic>? ?? const <dynamic>[]);
-    final id = json['id']?.toString();
-    final name = json['name']?.toString();
-    final createdAtRaw = json['createdAt']?.toString();
-    final deletedAtRaw = json['deletedAt']?.toString();
-    final isSys = (json['isSystem'] as bool?) ?? false;
-    return _ShoppingList._(
-      id: id == null || id.isEmpty
-          ? DateTime.now().microsecondsSinceEpoch.toString()
-          : id,
-      name: name == null || name.isEmpty ? 'Список' : name,
-      isFavorite: (json['isFavorite'] as bool?) ?? isSys,
-      isDeleted: (json['isDeleted'] as bool?) ?? false,
-      deletedAt: deletedAtRaw == null ? null : DateTime.tryParse(deletedAtRaw),
-      createdAt: createdAtRaw == null
-          ? DateTime.now()
-          : DateTime.tryParse(createdAtRaw) ?? DateTime.now(),
-      items: rawItems
-          .whereType<Map<String, dynamic>>()
-          .map(_ShoppingItem.fromJson)
-          .toList(),
-      isShared: (json['isShared'] as bool?) ?? false,
-      isOwner: (json['isOwner'] as bool?) ?? true,
-      isSystem: isSys,
-      role: json['role']?.toString() ?? 'owner',
-      itemCount: parseApiInt(json['itemCount']),
-      checkedCount: parseApiInt(json['checkedCount']),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'isFavorite': isFavorite,
-      'isDeleted': isDeleted,
-      'deletedAt': deletedAt?.toIso8601String(),
-      'createdAt': createdAt.toIso8601String(),
-      'items': items.map((e) => e.toJson()).toList(),
-      'isShared': isShared,
-      'isOwner': isOwner,
-      'isSystem': isSystem,
-      'role': role,
-      'itemCount': itemCount,
-      'checkedCount': checkedCount,
-    };
-  }
-
   _ShoppingList copyWith({
     String? name,
     bool? isFavorite,
@@ -1034,7 +980,6 @@ class _HomeRecommendationItem {
 
 class _HomeTab extends StatefulWidget {
   final String login;
-  final String listsStorageKey;
   final void Function(int index) onNavigate;
   final void Function(String listId, String listName) onSearchForList;
   final Future<void> Function(String name) onQuickAdd;
@@ -1042,7 +987,6 @@ class _HomeTab extends StatefulWidget {
   const _HomeTab({
     super.key,
     required this.login,
-    required this.listsStorageKey,
     required this.onNavigate,
     required this.onSearchForList,
     required this.onQuickAdd,
@@ -1990,11 +1934,9 @@ class _HomeRecommendationCard extends StatelessWidget {
   }
 }
 class _SearchTab extends StatefulWidget {
-  final String listsStorageKey;
 
   const _SearchTab({
     super.key,
-    required this.listsStorageKey,
   });
 
   @override
@@ -4167,12 +4109,10 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
 
 class _ProfileTab extends StatefulWidget {
   final String login;
-  final String listsStorageKey;
   final VoidCallback onOpenListsTab;
 
   const _ProfileTab({
     required this.login,
-    required this.listsStorageKey,
     required this.onOpenListsTab,
   });
 
@@ -4594,7 +4534,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                 MaterialPageRoute(
                   builder: (_) => _ProfileListsView(
                     title: 'История списков',
-                    listsStorageKey: widget.listsStorageKey,
                     onOpenListsTab: widget.onOpenListsTab,
                   ),
                 ),
@@ -4940,12 +4879,10 @@ class _ProfileActionButton extends StatelessWidget {
 
 class _ProfileListsView extends StatefulWidget {
   final String title;
-  final String listsStorageKey;
   final VoidCallback onOpenListsTab;
 
   const _ProfileListsView({
     required this.title,
-    required this.listsStorageKey,
     required this.onOpenListsTab,
   });
 
@@ -5220,38 +5157,6 @@ class _ShoppingItem {
     );
   }
 
-  // ignore: unused_element
-  factory _ShoppingItem.fromJson(Map<String, dynamic> json) {
-    final id = json['id']?.toString();
-    final name = json['name']?.toString();
-    final createdAtRaw = json['createdAt']?.toString();
-    return _ShoppingItem._(
-      id: id == null || id.isEmpty
-          ? DateTime.now().microsecondsSinceEpoch.toString()
-          : id,
-      name: name == null || name.isEmpty ? 'Товар' : name,
-      isDone: json['isDone'] == true,
-      createdAt: createdAtRaw == null
-          ? DateTime.now()
-          : DateTime.tryParse(createdAtRaw) ?? DateTime.now(),
-      quantity: parseApiDouble(json['quantity'], 1.0),
-      unit: json['unit']?.toString(),
-      notes: json['notes']?.toString(),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'isDone': isDone,
-      'createdAt': createdAt.toIso8601String(),
-      'quantity': quantity,
-      'unit': unit,
-      'notes': notes,
-    };
-  }
-
   _ShoppingItem copyWith({
     bool? isDone,
     String? name,
@@ -5270,10 +5175,4 @@ class _ShoppingItem {
     );
   }
 
-  String get createdLabel {
-    final date = createdAt;
-    String twoDigits(int value) => value.toString().padLeft(2, '0');
-    return '${twoDigits(date.day)}.${twoDigits(date.month)}.${date.year} '
-        '${twoDigits(date.hour)}:${twoDigits(date.minute)}';
-  }
 }
