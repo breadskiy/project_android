@@ -771,6 +771,7 @@ class _HomeShellState extends State<HomeShell> {
         login: widget.login,
         listsStorageKey: _listsStorageKey,
         onNavigate: _setTab,
+        onSearchForList: openSearchForList,
         onQuickAdd: (name) async {
           _setTab(1);
           await _searchKey.currentState?.quickAdd(name);
@@ -784,6 +785,7 @@ class _HomeShellState extends State<HomeShell> {
         key: _listsKey,
         login: widget.login,
         password: widget.password,
+        onSearchForList: openSearchForList,
       ),
       _ProfileTab(
         login: widget.login,
@@ -857,6 +859,13 @@ class _HomeShellState extends State<HomeShell> {
     if (index == 2) {
       _listsKey.currentState?.refresh();
     }
+  }
+
+  /// Открыть вкладку поиска с прицелом на конкретный список:
+  /// добавление идет сразу в него без диалога выбора.
+  void openSearchForList(String listId, String listName) {
+    _searchKey.currentState?.setTargetList(listId, listName);
+    _setTab(1);
   }
 }
 
@@ -1027,6 +1036,7 @@ class _HomeTab extends StatefulWidget {
   final String login;
   final String listsStorageKey;
   final void Function(int index) onNavigate;
+  final void Function(String listId, String listName) onSearchForList;
   final Future<void> Function(String name) onQuickAdd;
 
   const _HomeTab({
@@ -1034,6 +1044,7 @@ class _HomeTab extends StatefulWidget {
     required this.login,
     required this.listsStorageKey,
     required this.onNavigate,
+    required this.onSearchForList,
     required this.onQuickAdd,
   });
 
@@ -1063,40 +1074,14 @@ class _HomeTabState extends State<_HomeTab> {
     });
 
     try {
-      final listsFuture = ApiService.instance.getLists();
-      final replenishFuture = ApiService.instance.getReplenish().catchError((_) => <ApiReplenishItem>[]);
-
-      final results = await Future.wait([
-        listsFuture,
-        replenishFuture,
-      ]);
-
+      final apiLists = await ApiService.instance.getLists();
       if (!mounted) return;
-      final apiLists = results[0] as List<ApiShoppingList>;
-      final apiReplenish = results[1] as List<ApiReplenishItem>;
 
       final recs = <_HomeRecommendationItem>[];
       final seen = <String>{};
 
-      // 1. Пополнение: товары, которые скоро закончатся
-      for (final r in apiReplenish) {
-        final key = r.name.trim().toLowerCase();
-        if (key.isNotEmpty && seen.add(key)) {
-          recs.add(_HomeRecommendationItem(
-            name: r.name,
-            badgeText: 'Заканчивается',
-            badgeColor: const Color(0xFFF59E0B),
-            icon: Icons.hourglass_bottom_rounded,
-            detail: r.avgIntervalDays > 0
-                ? '~${r.avgIntervalDays.toStringAsFixed(0)} дн. между покупками'
-                : 'Пора пополнить',
-          ));
-        }
-        if (recs.length >= 6) break;
-      }
-
-      // 2. Рекомендации по совстречаемости из базы данных
-      if (recs.length < 8 && apiLists.isNotEmpty) {
+      // 1. Рекомендации по совстречаемости из базы данных
+      if (apiLists.isNotEmpty) {
         String? targetListId;
         for (final l in apiLists) {
           if (l.itemCount > 0) {
@@ -1118,13 +1103,13 @@ class _HomeTabState extends State<_HomeTab> {
                   detail: 'К товарам в списке',
                 ));
               }
-              if (recs.length >= 8) break;
+              if (recs.length >= 6) break;
             }
           } catch (_) {}
         }
       }
 
-      // 3. Базовые товары каталога (если аккаунт новый или история пуста)
+      // 2. Базовые товары каталога (если аккаунт новый или история пуста)
       if (recs.length < 6) {
         try {
           final products = await ApiService.instance.getProducts(limit: 6);
@@ -1139,7 +1124,7 @@ class _HomeTabState extends State<_HomeTab> {
                 detail: p.categoryName ?? (p.defaultUnit != null && p.defaultUnit!.isNotEmpty ? 'в ${p.defaultUnit}' : null),
               ));
             }
-            if (recs.length >= 8) break;
+            if (recs.length >= 6) break;
           }
         } catch (_) {}
       }
@@ -1169,6 +1154,7 @@ class _HomeTabState extends State<_HomeTab> {
         builder: (_) => ListDetailsPage(
           listId: list.id,
           listTitle: list.name,
+          onSearchForList: widget.onSearchForList,
         ),
       ),
     );
@@ -1247,6 +1233,7 @@ class _HomeTabState extends State<_HomeTab> {
           builder: (_) => ListDetailsPage(
             listId: created.id,
             listTitle: created.name,
+            onSearchForList: widget.onSearchForList,
           ),
         ),
       );
@@ -1291,7 +1278,31 @@ class _HomeTabState extends State<_HomeTab> {
                   else if (_lists.isEmpty)
                     _buildEmptyListsCard()
                   else
-                    ..._lists.map(_buildShoppingListCard),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ..._lists.take(3).map(_buildShoppingListCard),
+                    if (_lists.length > 3)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => widget.onNavigate(2),
+                            icon: const Icon(Icons.format_list_bulleted, size: 18),
+                            label: Text('Все списки (${_lists.length})'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _authBlue,
+                              side: BorderSide(color: _authBlue.withValues(alpha: 0.6)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        ),
+                        ),
+                      ],
+                    ),
                   if (_recommendations.isNotEmpty) ...[
                     const SizedBox(height: 20),
                     _buildRecommendationsHeader(),
@@ -2000,6 +2011,9 @@ class _SearchTabState extends State<_SearchTab> {
   final List<String> _searchHistory = [];
   String? _selectedCategoryId;
   bool _loadingCatalog = false;
+  bool _showAllProducts = false;
+  String? _targetListId;
+  String? _targetListName;
 
   @override
   void initState() {
@@ -2021,7 +2035,10 @@ class _SearchTabState extends State<_SearchTab> {
   }
 
   Future<void> _loadCategoriesAndProducts() async {
-    setState(() => _loadingCatalog = true);
+    setState(() {
+      _loadingCatalog = true;
+      _showAllProducts = false;
+    });
     try {
       final results = await Future.wait([
         ApiService.instance.getCategories(),
@@ -2042,10 +2059,31 @@ class _SearchTabState extends State<_SearchTab> {
     }
   }
 
+  /// Вызывается из открытого списка: поиск будет добавлять товары
+  /// сразу в этот список без диалога выбора.
+  void setTargetList(String listId, String listName) {
+    if (!mounted) return;
+    setState(() {
+      _targetListId = listId;
+      _targetListName = listName;
+      _controller.clear();
+    });
+    _focusNode.requestFocus();
+  }
+
+  void clearTargetList() {
+    if (!mounted) return;
+    setState(() {
+      _targetListId = null;
+      _targetListName = null;
+    });
+  }
+
   Future<void> _selectCategory(String? categoryId) async {
     setState(() {
       _selectedCategoryId = categoryId;
       _loadingCatalog = true;
+      _showAllProducts = false;
     });
     try {
       final products = await ApiService.instance.getProducts(
@@ -2224,6 +2262,22 @@ class _SearchTabState extends State<_SearchTab> {
         _loadHistory();
       }
       final parsed = await ApiService.instance.parseItem(name);
+      final targetId = _targetListId;
+      final targetName = _targetListName;
+      if (targetId != null) {
+        await ApiService.instance.addItem(
+          targetId,
+          parsed.name,
+          quantity: parsed.quantity,
+          unit: parsed.unit,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Товар "${parsed.name}" добавлен в список "${targetName ?? ''}"')),
+          );
+        }
+        return;
+      }
       final apiLists = await ApiService.instance.getLists();
       final lists = apiLists.map((l) => _ShoppingList.fromApi(l)).toList();
       if (!mounted) return;
@@ -2277,13 +2331,6 @@ class _SearchTabState extends State<_SearchTab> {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     await _addWithPicker(trimmed);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Добавлено: $trimmed'),
-        duration: const Duration(milliseconds: 900),
-      ),
-    );
   }
 
   void requestFocus() {
@@ -2324,6 +2371,43 @@ class _SearchTabState extends State<_SearchTab> {
                   style: TextStyle(color: Colors.white60),
                 ),
                 const SizedBox(height: 12),
+                if (_targetListId != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _authBlue.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _authBlue.withValues(alpha: 0.6)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.playlist_add, color: _authBlue, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Добавление в список «${_targetListName ?? ''}»',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: clearTargetList,
+                          borderRadius: BorderRadius.circular(999),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.close, color: Colors.white60, size: 16),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Autocomplete<ApiCatalogProduct>(
                   optionsBuilder: (TextEditingValue value) async {
                     final query = value.text.trim();
@@ -2603,10 +2687,15 @@ class _SearchTabState extends State<_SearchTab> {
                     ),
                   )
                 else
-                  GridView.builder(
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      GridView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _catalogProducts.length,
+                    itemCount: _showAllProducts
+                        ? _catalogProducts.length
+                        : (_catalogProducts.length > 10 ? 10 : _catalogProducts.length),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
                       mainAxisSpacing: 8,
@@ -2668,6 +2757,27 @@ class _SearchTabState extends State<_SearchTab> {
                       );
                     },
                   ),
+                  if (!_showAllProducts && _catalogProducts.length > 10)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => setState(() => _showAllProducts = true),
+                          icon: const Icon(Icons.expand_more, size: 18),
+                          label: Text('Показать все (${_catalogProducts.length})'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _authBlue,
+                            side: BorderSide(color: _authBlue.withValues(alpha: 0.6)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -2680,11 +2790,13 @@ class _SearchTabState extends State<_SearchTab> {
 class ListsPage extends StatefulWidget {
   final String login;
   final String password;
+  final void Function(String listId, String listName) onSearchForList;
 
   const ListsPage({
     super.key,
     required this.login,
     required this.password,
+    required this.onSearchForList,
   });
 
   @override
@@ -3008,176 +3120,6 @@ class _ListsPageState extends State<ListsPage> {
     }
   }
 
-  Future<void> _showReplenishDialog() async {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return Container(
-          decoration: BoxDecoration(
-            color: _authCard,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: _authBlue.withValues(alpha: 0.4), width: 1.5),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: SafeArea(
-            top: false,
-            child: FutureBuilder<List<ApiReplenishItem>>(
-              future: ApiService.instance.getReplenish(),
-              builder: (context, snapshot) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        const Icon(Icons.auto_awesome, color: _authBlue, size: 22),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Что скоро закончится',
-                            style: GoogleFonts.inter(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close, color: Colors.white60, size: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Система анализирует историю покупок и рассчитывает, какие товары пора докупить.',
-                      style: TextStyle(color: Colors.white60, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    if (snapshot.connectionState == ConnectionState.waiting)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 36),
-                        child: Center(
-                          child: CircularProgressIndicator(color: _authBlue),
-                        ),
-                      )
-                    else if (snapshot.hasError)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          'Ошибка: ${snapshot.error}',
-                          style: const TextStyle(color: _danger),
-                        ),
-                      )
-                    else if (snapshot.data == null || snapshot.data!.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Column(
-                          children: [
-                            Icon(Icons.checklist, size: 48, color: Colors.white.withValues(alpha: 0.2)),
-                            const SizedBox(height: 12),
-                            const Text(
-                              'Пока нет товаров для пополнения',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                            ),
-                            const SizedBox(height: 6),
-                            const Text(
-                              'Отмечайте купленные товары в списках покупок (не менее 3 раз), чтобы алгоритм рассчитал регулярность и сформировал прогноз.',
-                              style: TextStyle(color: Colors.white60, fontSize: 12),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 340),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: snapshot.data!.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final item = snapshot.data![index];
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: _authBlue, width: 1.4),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          style: const TextStyle(
-                                            color: _ink,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          'Интервал: ~${item.avgIntervalDays.toStringAsFixed(0)} дн. (прошло ${item.daysSinceLast.toStringAsFixed(0)} дн.)',
-                                          style: const TextStyle(color: _muted, fontSize: 11),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  ElevatedButton.icon(
-                                    onPressed: () async {
-                                      final messenger = ScaffoldMessenger.of(context);
-                                      Navigator.pop(context);
-                                      if (_lists.isNotEmpty) {
-                                        final target = _lists.first;
-                                        await ApiService.instance.addItem(target.id, item.name);
-                                        if (mounted) {
-                                          messenger.showSnackBar(
-                                            SnackBar(content: Text('Товар "${item.name}" добавлен в список "${target.name}"')),
-                                          );
-                                          await refresh();
-                                        }
-                                      }
-                                    },
-                                    icon: const Icon(Icons.add, size: 16),
-                                    label: const Text('Добавить', style: TextStyle(fontSize: 12)),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _authBlue,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      visualDensity: VisualDensity.compact,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildListsTab(String title, bool isAdded) {
     final selected = _showAddedLists == isAdded;
     return InkWell(
@@ -3309,6 +3251,7 @@ class _ListsPageState extends State<ListsPage> {
         builder: (_) => ListDetailsPage(
           listId: list.id,
           listTitle: list.name,
+          onSearchForList: widget.onSearchForList,
         ),
       ),
     );
@@ -3412,39 +3355,21 @@ class _ListsPageState extends State<ListsPage> {
                       ),
                     )
                   else
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _addListDialog,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Добавить список'),
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 15),
-                              backgroundColor: _authBlue,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(26),
-                              ),
-                            ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _addListDialog,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Добавить список'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          backgroundColor: _authBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(26),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        ElevatedButton.icon(
-                          onPressed: _showReplenishDialog,
-                          icon: const Icon(Icons.auto_awesome, color: _authBlue, size: 18),
-                          label: const Text('Пополнение'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-                            backgroundColor: _authCard,
-                            foregroundColor: Colors.white,
-                            side: BorderSide(color: _authBlue.withValues(alpha: 0.6)),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(26),
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                 ],
               ),
@@ -3459,11 +3384,13 @@ class _ListsPageState extends State<ListsPage> {
 class ListDetailsPage extends StatefulWidget {
   final String listId;
   final String? listTitle;
+  final void Function(String listId, String listName)? onSearchForList;
 
   const ListDetailsPage({
     super.key,
     required this.listId,
     this.listTitle,
+    this.onSearchForList,
   });
 
   @override
@@ -3747,147 +3674,6 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка очистки: $e')));
       }
     }
-  }
-
-  Future<void> _showReplenishSheet() async {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return Container(
-          decoration: BoxDecoration(
-            color: _authCard,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: _authBlue.withValues(alpha: 0.4), width: 1.5),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: SafeArea(
-            top: false,
-            child: FutureBuilder<List<ApiReplenishItem>>(
-              future: ApiService.instance.getReplenish(),
-              builder: (context, snapshot) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        const Icon(Icons.auto_awesome, color: _authBlue, size: 22),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Что скоро закончится',
-                            style: GoogleFonts.inter(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          icon: const Icon(Icons.close, color: Colors.white60, size: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Товары, которые вы регулярно покупаете (на основе истории покупок в базе данных):',
-                      style: TextStyle(color: Colors.white60, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    if (snapshot.connectionState == ConnectionState.waiting)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 36),
-                        child: Center(child: CircularProgressIndicator(color: _authBlue)),
-                      )
-                    else if (snapshot.hasError)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text('Ошибка: ${snapshot.error}', style: const TextStyle(color: _danger)),
-                      )
-                    else if (snapshot.data == null || snapshot.data!.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Text(
-                          'Пока нет истории покупок для расчета регулярности',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                      )
-                    else
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 300),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: snapshot.data!.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final item = snapshot.data![index];
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: _authBlue, width: 1.4),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          style: const TextStyle(
-                                            color: _ink,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        Text(
-                                          'Интервал: ~${item.avgIntervalDays.toStringAsFixed(0)} дн. (прошло ${item.daysSinceLast.toStringAsFixed(0)} дн.)',
-                                          style: const TextStyle(color: _muted, fontSize: 11),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  ElevatedButton.icon(
-                                    onPressed: () async {
-                                      Navigator.pop(ctx);
-                                      await _addItemWithText(item.name);
-                                    },
-                                    icon: const Icon(Icons.add, size: 16),
-                                    label: const Text('В список', style: TextStyle(fontSize: 12)),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _authBlue,
-                                      foregroundColor: Colors.white,
-                                      visualDensity: VisualDensity.compact,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _toggleItem(int index, bool? value) async {
@@ -4217,7 +4003,16 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                         color: _authBlue,
                       ),
                       IconButton(
-                        onPressed: _showSearchAddSheet,
+                        onPressed: () {
+                          final goToSearch = widget.onSearchForList;
+                          if (goToSearch != null) {
+                            final name = _list?.name ?? widget.listTitle ?? 'Список';
+                            Navigator.pop(context);
+                            goToSearch(widget.listId, name);
+                          } else {
+                            _showSearchAddSheet();
+                          }
+                        },
                         icon: const Icon(Icons.search),
                         color: Colors.white70,
                       ),
@@ -4235,8 +4030,6 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                             _clearItems(checkedOnly: true);
                           } else if (val == 'clear_all') {
                             _clearItems(checkedOnly: false);
-                          } else if (val == 'replenish') {
-                            _showReplenishSheet();
                           }
                         },
                         itemBuilder: (ctx) => [
@@ -4257,17 +4050,6 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                                 Icon(Icons.delete_sweep, color: _danger, size: 18),
                                 SizedBox(width: 8),
                                 Text('Очистить весь список', style: TextStyle(color: _danger)),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuDivider(),
-                          const PopupMenuItem(
-                            value: 'replenish',
-                            child: Row(
-                              children: [
-                                Icon(Icons.auto_awesome, color: _authBlue, size: 18),
-                                SizedBox(width: 8),
-                                Text('Что скоро закончится', style: TextStyle(color: Colors.white)),
                               ],
                             ),
                           ),
@@ -4476,147 +4258,6 @@ class _ProfileTabState extends State<_ProfileTab> {
         );
       }
     }
-  }
-
-  Future<void> _showReplenishSheet() async {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return Container(
-          decoration: BoxDecoration(
-            color: _authCard,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            border: Border.all(color: _authBlue.withValues(alpha: 0.4), width: 1.5),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: SafeArea(
-            top: false,
-            child: FutureBuilder<List<ApiReplenishItem>>(
-              future: ApiService.instance.getReplenish(),
-              builder: (context, snapshot) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        const Icon(Icons.auto_awesome, color: _authBlue, size: 22),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Что скоро закончится',
-                            style: GoogleFonts.inter(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          icon: const Icon(Icons.close, color: Colors.white60, size: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Анализ базы данных истории покупок для своевременного пополнения:',
-                      style: TextStyle(color: Colors.white60, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    if (snapshot.connectionState == ConnectionState.waiting)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 36),
-                        child: Center(child: CircularProgressIndicator(color: _authBlue)),
-                      )
-                    else if (snapshot.hasError)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text('Ошибка: ${snapshot.error}', style: const TextStyle(color: _danger)),
-                      )
-                    else if (snapshot.data == null || snapshot.data!.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Text(
-                          'Пока нет достаточной истории покупок в базе данных для расчета регулярности',
-                          style: TextStyle(color: Colors.white70),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
-                    else
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 300),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: snapshot.data!.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final item = snapshot.data![index];
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: _authBlue, width: 1.4),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          style: const TextStyle(
-                                            color: _ink,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                        Text(
-                                          'Интервал: ~${item.avgIntervalDays.toStringAsFixed(0)} дн. (прошло ${item.daysSinceLast.toStringAsFixed(0)} дн.)',
-                                          style: const TextStyle(color: _muted, fontSize: 11),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      Navigator.pop(ctx);
-                                      widget.onOpenListsTab();
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _authBlue,
-                                      foregroundColor: Colors.white,
-                                      visualDensity: VisualDensity.compact,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                    ),
-                                    child: const Text('К спискам', style: TextStyle(fontSize: 12)),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _showSessionsSheet() async {
@@ -4947,7 +4588,6 @@ class _ProfileTabState extends State<_ProfileTab> {
               aiSuggestionsEnabled: _settings?.aiSuggestionsEnabled ?? true,
               onToggleAiSuggestions: _toggleAi,
               onFavorites: _openFavoritesList,
-              onReplenish: _showReplenishSheet,
               onSessions: _showSessionsSheet,
               onChangePassword: _showChangePasswordDialog,
               onHistory: () => _navKey.currentState?.push(
@@ -4974,7 +4614,6 @@ class _ProfileHomeView extends StatelessWidget {
   final bool aiSuggestionsEnabled;
   final ValueChanged<bool> onToggleAiSuggestions;
   final VoidCallback onFavorites;
-  final VoidCallback onReplenish;
   final VoidCallback onSessions;
   final VoidCallback onChangePassword;
   final VoidCallback onHistory;
@@ -4986,7 +4625,6 @@ class _ProfileHomeView extends StatelessWidget {
     required this.aiSuggestionsEnabled,
     required this.onToggleAiSuggestions,
     required this.onFavorites,
-    required this.onReplenish,
     required this.onSessions,
     required this.onChangePassword,
     required this.onHistory,
@@ -5153,13 +4791,6 @@ class _ProfileHomeView extends StatelessWidget {
                     label: '⭐ Системное Избранное',
                     subtitle: 'Открыть системный список покупок',
                     onPressed: onFavorites,
-                  ),
-                  const SizedBox(height: 12),
-                  _ProfileActionButton(
-                    icon: Icons.auto_awesome,
-                    label: 'Что скоро закончится',
-                    subtitle: 'Умный расчет регулярности покупок по истории БД',
-                    onPressed: onReplenish,
                   ),
                   const SizedBox(height: 12),
                   _ProfileActionButton(

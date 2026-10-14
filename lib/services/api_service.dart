@@ -973,34 +973,37 @@ class ApiService {
     return [];
   }
 
+  String get _historyKey =>
+      'search_history_${_currentUser?.id ?? 'guest'}';
+
   Future<List<String>> getSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('search_history') ?? [];
+    return prefs.getStringList(_historyKey) ?? [];
   }
 
   Future<void> addSearchQuery(String query) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
-    final history = prefs.getStringList('search_history') ?? [];
+    final history = prefs.getStringList(_historyKey) ?? [];
     history.removeWhere((e) => e.toLowerCase() == trimmed.toLowerCase());
     history.insert(0, trimmed);
     if (history.length > 20) {
       history.removeRange(20, history.length);
     }
-    await prefs.setStringList('search_history', history);
+    await prefs.setStringList(_historyKey, history);
   }
 
   Future<void> removeSearchQuery(String query) async {
     final prefs = await SharedPreferences.getInstance();
-    final history = prefs.getStringList('search_history') ?? [];
+    final history = prefs.getStringList(_historyKey) ?? [];
     history.removeWhere((e) => e.toLowerCase() == query.trim().toLowerCase());
-    await prefs.setStringList('search_history', history);
+    await prefs.setStringList(_historyKey, history);
   }
 
   Future<void> clearSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('search_history');
+    await prefs.remove(_historyKey);
   }
 
   Future<int> clearItems(String listId, {bool checkedOnly = false}) async {
