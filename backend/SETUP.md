@@ -23,7 +23,7 @@ cd D:\project_android\backend
 - `DB_PORT=5432`
 - `DB_NAME=smart_supply_list`
 - `DB_USER=postgres`
-- `DB_PASSWORD=psyebaaan`
+- `DB_PASSWORD=Miron_off13` (пароль локального `postgres`; общий с проектом SpaceMap)
 - `JWT_SECRET_KEY=...`
 - `SUGGESTIONS_PROVIDER=statistical` (табличный движок совстречаемости)
 

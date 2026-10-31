@@ -1961,6 +1961,7 @@ class _SearchTabState extends State<_SearchTab> {
   final List<ApiCatalogProduct> _catalogProducts = [];
   final List<String> _searchHistory = [];
   final List<ApiCatalogProduct> _searchResults = [];
+  final List<ApiItemSuggestion> _searchSuggestions = [];
   String? _selectedCategoryId;
   bool _loadingCatalog = false;
   bool _searching = false;
@@ -2042,6 +2043,7 @@ class _SearchTabState extends State<_SearchTab> {
       setState(() {
         _activeQuery = '';
         _searchResults.clear();
+        _searchSuggestions.clear();
         _searching = false;
       });
       return;
@@ -2055,6 +2057,7 @@ class _SearchTabState extends State<_SearchTab> {
     setState(() {
       _activeQuery = q;
       _searching = true;
+      _searchSuggestions.clear();
     });
     try {
       final products = await ApiService.instance.searchCatalog(q);
@@ -2067,14 +2070,112 @@ class _SearchTabState extends State<_SearchTab> {
           ..addAll(products);
         _searching = false;
       });
+      _loadSuggestionsFor(q, products);
     } catch (_) {
       if (mounted) {
         setState(() {
           _searchResults.clear();
+          _searchSuggestions.clear();
           _searching = false;
         });
       }
     }
+  }
+
+  /// Подсказки «часто берут вместе» к текущему запросу и найденным товарам.
+  Future<void> _loadSuggestionsFor(
+    String query,
+    List<ApiCatalogProduct> products,
+  ) async {
+    final seeds = <String>[];
+    void addSeed(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final key = trimmed.toLowerCase();
+      if (seeds.any((seed) => seed.toLowerCase() == key)) return;
+      seeds.add(trimmed);
+    }
+
+    // Сам запрос может быть товаром, а первый результат — самым релевантным.
+    addSeed(query);
+    if (products.isNotEmpty) addSeed(products.first.name);
+    if (seeds.isEmpty) return;
+
+    final fetched = await ApiService.instance.getItemsSuggestions(
+      seeds,
+      limit: 6,
+    );
+    if (!mounted || _activeQuery != query) return;
+
+    final seen = products.map((p) => p.name.trim().toLowerCase()).toSet();
+    final filtered = <ApiItemSuggestion>[];
+    for (final suggestion in fetched) {
+      final key = suggestion.name.trim().toLowerCase();
+      if (key.isEmpty || !seen.add(key)) continue;
+      filtered.add(suggestion);
+    }
+
+    setState(() {
+      _searchSuggestions
+        ..clear()
+        ..addAll(filtered.take(6));
+    });
+  }
+
+  Widget _buildSearchSuggestions() {
+    if (_searchSuggestions.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _authCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _authBlue.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, color: _authBlue, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'С этим часто берут:',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white70,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _searchSuggestions.map((suggestion) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ActionChip(
+                    avatar: const Icon(Icons.add, size: 15, color: _authBlue),
+                    label: Text(
+                      capName(suggestion.name),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    backgroundColor: Colors.black.withValues(alpha: 0.25),
+                    side: BorderSide(color: _authBlue.withValues(alpha: 0.45)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    onPressed: () => _addWithPicker(capName(suggestion.name)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _selectCategory(String? categoryId) async {
@@ -2578,6 +2679,7 @@ class _SearchTabState extends State<_SearchTab> {
                       ),
                     ),
                 ],
+                if (_searchSuggestions.isNotEmpty) _buildSearchSuggestions(),
                 if (_searchHistory.isNotEmpty) ...[
                   const SizedBox(height: 18),
                   Row(
@@ -4759,21 +4861,6 @@ class _ProfileHomeView extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.analytics_outlined, color: _authBlue, size: 18),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Данные из базы PostgreSQL',
-                              style: GoogleFonts.inter(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
                             Expanded(
                               child: _buildStatItem(
                                 '${profile?.listsCount ?? 0}',
@@ -4819,7 +4906,7 @@ class _ProfileHomeView extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Подсказки ИИ ("часто берут")',
+                                'Подсказки «часто берут»',
                                 style: GoogleFonts.inter(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w700,
@@ -4828,7 +4915,7 @@ class _ProfileHomeView extends StatelessWidget {
                               ),
                               const SizedBox(height: 2),
                               const Text(
-                                'Рекомендации сопутствующих товаров на основе правил ассоциаций',
+                                'Рекомендации сопутствующих товаров по правилам ассоциаций',
                                 style: TextStyle(color: Colors.white60, fontSize: 11),
                               ),
                             ],
@@ -5279,7 +5366,7 @@ class _ShoppingItem {
   _ShoppingItem copyWith({
     bool? isDone,
     String? name,
-    double? quantity,
+    double? quantity, 
     String? unit,
     String? notes,
   }) {
