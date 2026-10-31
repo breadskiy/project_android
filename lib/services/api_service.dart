@@ -406,6 +406,7 @@ class ApiService {
   String? _accessToken;
   String? _refreshToken;
   ApiUser? _currentUser;
+  Set<String>? _cachedFavoriteListIds;
 
   bool get isLoggedIn => _accessToken != null && _accessToken!.isNotEmpty;
   ApiUser? get currentUser => _currentUser;
@@ -453,6 +454,8 @@ class ApiService {
         displayName: name ?? 'Пользователь',
       );
     }
+    final favList = prefs.getStringList(_favoriteListsKey) ?? [];
+    _cachedFavoriteListIds = favList.toSet();
   }
 
   Future<void> _saveTokens({
@@ -472,6 +475,8 @@ class ApiService {
       await prefs.setString(_prefUserEmail, _currentUser!.email);
       await prefs.setString(_prefUserDisplayName, _currentUser!.displayName);
     }
+    final favList = prefs.getStringList(_favoriteListsKey) ?? [];
+    _cachedFavoriteListIds = favList.toSet();
   }
 
   Future<void> logout() async {
@@ -490,6 +495,7 @@ class ApiService {
     _accessToken = null;
     _refreshToken = null;
     _currentUser = null;
+    _cachedFavoriteListIds = null;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefAccessToken);
@@ -1004,6 +1010,37 @@ class ApiService {
   Future<void> clearSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_historyKey);
+  }
+
+  String get _favoriteListsKey =>
+      'favorite_lists_${_currentUser?.id ?? 'guest'}';
+
+  Future<Set<String>> getFavoriteListIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_favoriteListsKey) ?? [];
+    _cachedFavoriteListIds = list.toSet();
+    return _cachedFavoriteListIds!;
+  }
+
+  bool isListFavoriteSync(String listId) {
+    return _cachedFavoriteListIds?.contains(listId) ?? false;
+  }
+
+  Future<bool> toggleFavoriteList(String listId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_favoriteListsKey) ?? [];
+    final set = list.toSet();
+    final bool isFav;
+    if (set.contains(listId)) {
+      set.remove(listId);
+      isFav = false;
+    } else {
+      set.add(listId);
+      isFav = true;
+    }
+    await prefs.setStringList(_favoriteListsKey, set.toList());
+    _cachedFavoriteListIds = set;
+    return isFav;
   }
 
   Future<int> clearItems(String listId, {bool checkedOnly = false}) async {

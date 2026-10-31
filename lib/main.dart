@@ -921,11 +921,19 @@ class _ShoppingList {
     this.checkedCount = 0,
   });
 
-  factory _ShoppingList.fromApi(ApiShoppingList apiList, [List<_ShoppingItem>? items]) {
+  factory _ShoppingList.fromApi(
+    ApiShoppingList apiList, [
+    List<_ShoppingItem>? items,
+    Set<String>? favoriteIds,
+  ]) {
+    final bool isFav = apiList.isSystem ||
+        (favoriteIds != null
+            ? favoriteIds.contains(apiList.id)
+            : ApiService.instance.isListFavoriteSync(apiList.id));
     return _ShoppingList._(
       id: apiList.id,
       name: apiList.name,
-      isFavorite: apiList.isSystem,
+      isFavorite: isFav,
       isDeleted: false,
       deletedAt: null,
       createdAt: apiList.createdAt,
@@ -1082,10 +1090,20 @@ class _HomeTabState extends State<_HomeTab> {
         } catch (_) {}
       }
 
+      final favIds = await ApiService.instance.getFavoriteListIds();
+      final loadedLists = apiLists.map((l) => _ShoppingList.fromApi(l, null, favIds)).toList();
+      loadedLists.sort((a, b) {
+        if (a.isSystem && !b.isSystem) return -1;
+        if (!a.isSystem && b.isSystem) return 1;
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return 0;
+      });
+
       setState(() {
         _lists
           ..clear()
-          ..addAll(apiLists.map((l) => _ShoppingList.fromApi(l)));
+          ..addAll(loadedLists);
         _recommendations
           ..clear()
           ..addAll(recs);
@@ -1467,7 +1485,9 @@ class _HomeTabState extends State<_HomeTab> {
                     child: Icon(
                       isDone
                           ? Icons.check_circle_outline
-                          : (list.isSystem ? Icons.star_rounded : Icons.shopping_bag_outlined),
+                          : (list.isFavorite
+                              ? Icons.favorite
+                              : (list.isSystem ? Icons.star_rounded : Icons.shopping_bag_outlined)),
                       color: isDone ? const Color(0xFF10B981) : _authBlue,
                       size: 22,
                     ),
@@ -2378,7 +2398,15 @@ class _SearchTabState extends State<_SearchTab> {
         return;
       }
       final apiLists = await ApiService.instance.getLists();
-      final lists = apiLists.map((l) => _ShoppingList.fromApi(l)).toList();
+      final favIds = await ApiService.instance.getFavoriteListIds();
+      final lists = apiLists.map((l) => _ShoppingList.fromApi(l, null, favIds)).toList();
+      lists.sort((a, b) {
+        if (a.isSystem && !b.isSystem) return -1;
+        if (!a.isSystem && b.isSystem) return 1;
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return 0;
+      });
       if (!mounted) return;
 
       if (lists.isEmpty) {
@@ -2992,11 +3020,12 @@ class _ListsPageState extends State<ListsPage> {
     setState(() => _isLoading = true);
     try {
       final apiLists = await ApiService.instance.getLists();
+      final favIds = await ApiService.instance.getFavoriteListIds();
       if (!mounted) return;
       setState(() {
         _lists
           ..clear()
-          ..addAll(apiLists.map((l) => _ShoppingList.fromApi(l)));
+          ..addAll(apiLists.map((l) => _ShoppingList.fromApi(l, null, favIds)));
       });
     } catch (e) {
       if (mounted) {
@@ -3014,6 +3043,13 @@ class _ListsPageState extends State<ListsPage> {
     final visible = _showAddedLists
         ? _lists.where((l) => !l.isOwner && l.role != 'owner').toList()
         : _lists.where((l) => l.isOwner || l.role == 'owner').toList();
+    visible.sort((a, b) {
+      if (a.isSystem && !b.isSystem) return -1;
+      if (!a.isSystem && b.isSystem) return 1;
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return 0;
+    });
     if (q.isEmpty) return visible;
     return visible.where((l) => _normalizeQuery(l.name).contains(q)).toList();
   }
@@ -3380,8 +3416,23 @@ class _ListsPageState extends State<ListsPage> {
       );
       return;
     }
+    final isFav = await ApiService.instance.toggleFavoriteList(list.id);
+    if (!mounted) return;
+    setState(() {
+      final index = _lists.indexWhere((e) => e.id == list.id);
+      if (index != -1) {
+        _lists[index] = _lists[index].copyWith(isFavorite: isFav);
+      }
+    });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Товары можно сохранять в системный список «⭐ Избранное»')),
+      SnackBar(
+        content: Text(
+          isFav
+              ? 'Список «${list.name}» добавлен в избранное'
+              : 'Список «${list.name}» удален из избранного',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 
@@ -3561,25 +3612,14 @@ class ListDetailsPage extends StatefulWidget {
 }
 
 class _ListDetailsPageState extends State<ListDetailsPage> {
-  final TextEditingController _itemController = TextEditingController();
   _ShoppingList? _list;
   bool _isLoading = true;
   List<ApiItemSuggestion> _suggestions = [];
-
-
-
-
 
   @override
   void initState() {
     super.initState();
     _load();
-  }
-
-  @override
-  void dispose() {
-    _itemController.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -3592,12 +3632,14 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
       final apiList = detail['list'] as ApiShoppingList;
       final apiItems = detail['items'] as List<ApiShoppingItem>;
       final suggestions = await suggestionsFuture.catchError((_) => <ApiItemSuggestion>[]);
+      final favIds = await ApiService.instance.getFavoriteListIds();
 
       if (!mounted) return;
       setState(() {
         _list = _ShoppingList.fromApi(
           apiList,
           apiItems.map(_ShoppingItem.fromApi).toList(),
+          favIds,
         );
         _suggestions = suggestions;
       });
@@ -3744,52 +3786,30 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
     }
   }
 
-  void _toggleFavorite() {
+  Future<void> _toggleFavorite() async {
     final current = _list;
     if (current == null) return;
     if (current.isSystem) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Этот список является системным избранным')),
+        const SnackBar(content: Text('Системный список («⭐ Избранное») закреплен в избранном')),
       );
       return;
     }
+    final isFav = await ApiService.instance.toggleFavoriteList(current.id);
+    if (!mounted) return;
     setState(() {
-      _list = current.copyWith(isFavorite: !current.isFavorite);
+      _list = current.copyWith(isFavorite: isFav);
     });
-  }
-
-  bool _isAddingItem = false;
-
-  Future<void> _addItemWithText(String text) async {
-    if (_isAddingItem) return;
-    _isAddingItem = true;
-    try {
-      ApiParsedItem? parsed;
-      try {
-        parsed = await ApiService.instance.parseItem(text);
-      } catch (_) {}
-
-      final itemName = (parsed?.name.isNotEmpty == true) ? parsed!.name : text;
-      final quantity = parsed?.quantity ?? 1.0;
-      final unit = parsed?.unit;
-
-      final res = await ApiService.instance.addItem(
-        widget.listId,
-        itemName,
-        quantity: quantity,
-        unit: unit,
-      );
-      final newItem = _ShoppingItem.fromApi(res.item);
-      if (!mounted) return;
-      setState(() {
-        _list = _list?.copyWith(items: [newItem, ...?_list?.items]);
-        _suggestions = res.suggestions;
-      });
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      _isAddingItem = false;
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isFav
+              ? 'Список «${current.name}» добавлен в избранное'
+              : 'Список «${current.name}» удален из избранного',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _clearItems({required bool checkedOnly}) async {
@@ -3871,63 +3891,6 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     }
-  }
-
-  Future<void> _showAddItemDialog() async {
-    _itemController.clear();
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: _authCard,
-          title: const Text('Добавить товар', style: TextStyle(color: Colors.white)),
-          content: TextField(
-            controller: _itemController,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white),
-            textInputAction: TextInputAction.done,
-            onSubmitted: (val) async {
-              final text = val.trim();
-              if (text.isNotEmpty) {
-                Navigator.pop(context);
-                await _addItemWithText(text);
-              }
-            },
-            decoration: InputDecoration(
-              hintText: 'Название товара',
-              hintStyle: const TextStyle(color: Colors.white54),
-              filled: true,
-              fillColor: Colors.black.withValues(alpha: 0.15),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: _authBlue, width: 1.5),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена', style: TextStyle(color: Colors.white70)),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final text = _itemController.text.trim();
-                if (text.isNotEmpty) {
-                  Navigator.pop(context);
-                  await _addItemWithText(text);
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _authBlue,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-              ),
-              child: const Text('Добавить'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Future<void> _showSearchAddSheet() async {
@@ -4177,11 +4140,6 @@ class _ListDetailsPageState extends State<ListDetailsPage> {
                           }
                         },
                         icon: const Icon(Icons.search),
-                        color: Colors.white70,
-                      ),
-                      IconButton(
-                        onPressed: _showAddItemDialog,
-                        icon: const Icon(Icons.add_circle_outline),
                         color: Colors.white70,
                       ),
                       PopupMenuButton<String>(
@@ -5110,11 +5068,20 @@ class _ProfileListsViewState extends State<_ProfileListsView> {
     setState(() => _loading = true);
     try {
       final apiLists = await ApiService.instance.getLists();
+      final favIds = await ApiService.instance.getFavoriteListIds();
       if (!mounted) return;
+      final loaded = apiLists.map((l) => _ShoppingList.fromApi(l, null, favIds)).toList();
+      loaded.sort((a, b) {
+        if (a.isSystem && !b.isSystem) return -1;
+        if (!a.isSystem && b.isSystem) return 1;
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return 0;
+      });
       setState(() {
         _lists
           ..clear()
-          ..addAll(apiLists.map((l) => _ShoppingList.fromApi(l)));
+          ..addAll(loaded);
       });
     } catch (e) {
       if (mounted) {

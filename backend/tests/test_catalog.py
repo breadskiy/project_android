@@ -123,3 +123,12 @@ async def test_unknown_item_has_no_product_link(client: httpx.AsyncClient, user)
         json={"name": "какой-то особенный товар"},
     )
     assert response.json()["item"]["product_id"] is None
+
+
+async def test_search_carrot_does_not_return_mors(client: httpx.AsyncClient, user) -> None:
+    """Searching for 'морковь' must not leak unrelated 'морс'."""
+    response = await client.get("/products/search?q=морковь", headers=user.headers)
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()["items"]]
+    assert "морковь" in names
+    assert "морс" not in names

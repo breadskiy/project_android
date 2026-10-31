@@ -8,7 +8,7 @@ from app.core.normalization import normalize_item_name
 from app.db.pool import Row, connection, execute, fetch_all, fetch_one, fetch_value
 
 # Trigram similarity below this is noise for short Russian product names.
-DEFAULT_SIMILARITY_THRESHOLD = 0.3
+DEFAULT_SIMILARITY_THRESHOLD = 0.35
 
 
 def search(
@@ -96,6 +96,9 @@ def search(
             "limit": limit,
         },
     )
+    if any(float(r["score"]) >= 0.85 for r in rows):
+        rows = [r for r in rows if float(r["score"]) >= 0.6]
+    return rows
 
 
 def find_exact(normalized_name: str) -> Row | None:
